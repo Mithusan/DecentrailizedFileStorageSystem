@@ -8,14 +8,17 @@ public class PeerDiscovery {
 
     private final int tcpPort;
     private final String publicKey;
-    private final String uniqueId; // Unique identifier for this peer
+    private final String uniqueId;
+    private final int udpPort; // Unique UDP port for this peer
     private final ExecutorService executor = Executors.newCachedThreadPool();
-    private static final int DISCOVERY_PORT = 8888; // Fixed port for UDP broadcast
+    private static final int DISCOVERY_PORT_START = 8888; // Start of UDP port range
+    private static final int DISCOVERY_PORT_END = 8898;   // End of UDP port range
 
-    public PeerDiscovery(int tcpPort, String publicKey) {
+    public PeerDiscovery(int tcpPort, String publicKey, int udpPort) {
         this.tcpPort = tcpPort;
         this.publicKey = publicKey;
-        this.uniqueId = UUID.randomUUID().toString(); // Generate a unique ID
+        this.uniqueId = UUID.randomUUID().toString();
+        this.udpPort = udpPort;
     }
 
     // Start listening for TCP connections
@@ -33,13 +36,11 @@ public class PeerDiscovery {
         });
     }
 
-    // Handle incoming TCP connections
     private void handleConnection(Socket socket) {
         executor.submit(() -> {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                  PrintWriter writer = new PrintWriter(socket.getOutputStream(), true)) {
 
-                // Receive public key from peer
                 String incomingKey = reader.readLine();
                 System.out.println("Connection attempt from public key: " + incomingKey);
 
@@ -57,16 +58,17 @@ public class PeerDiscovery {
         });
     }
 
-    // Broadcast public key for discovery
     public void startBroadcasting() {
         executor.submit(() -> {
             try (DatagramSocket socket = new DatagramSocket()) {
                 String message = uniqueId + "|" + publicKey;
                 byte[] data = message.getBytes();
-                DatagramPacket packet = new DatagramPacket(data, data.length, InetAddress.getByName("255.255.255.255"), DISCOVERY_PORT);
 
                 while (true) {
-                    socket.send(packet);
+                    for (int port = DISCOVERY_PORT_START; port <= DISCOVERY_PORT_END; port++) {
+                        DatagramPacket packet = new DatagramPacket(data, data.length, InetAddress.getByName("255.255.255.255"), port);
+                        socket.send(packet);
+                    }
                     System.out.println("Broadcasting public key...");
                     Thread.sleep(5000); // Broadcast every 5 seconds
                 }
@@ -76,10 +78,9 @@ public class PeerDiscovery {
         });
     }
 
-    // Listen for broadcasts and attempt connections
     public void listenForBroadcasts() {
         executor.submit(() -> {
-            try (DatagramSocket socket = new DatagramSocket(DISCOVERY_PORT)) {
+            try (DatagramSocket socket = new DatagramSocket(udpPort)) {
                 byte[] buffer = new byte[1024];
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
 
@@ -88,12 +89,10 @@ public class PeerDiscovery {
                     String receivedMessage = new String(packet.getData(), 0, packet.getLength());
                     String[] parts = receivedMessage.split("\\|");
 
-                    // Parse the broadcast message
                     String senderId = parts[0];
                     String receivedKey = parts[1];
                     String senderAddress = packet.getAddress().getHostAddress();
 
-                    // Skip self-connections based on unique ID
                     if (senderId.equals(uniqueId)) {
                         continue;
                     }
@@ -113,17 +112,13 @@ public class PeerDiscovery {
         });
     }
 
-    // Connect to a discovered peer
     private void connectToPeer(String host, int peerPort) {
         executor.submit(() -> {
             try (Socket socket = new Socket(host, peerPort);
                  PrintWriter writer = new PrintWriter(socket.getOutputStream(), true);
                  BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
 
-                // Send public key to the peer
                 writer.println(publicKey);
-
-                // Read response from the peer
                 String response = reader.readLine();
                 System.out.println("Response from peer: " + response);
             } catch (IOException e) {
@@ -135,22 +130,19 @@ public class PeerDiscovery {
     public static void main(String[] args) throws IOException {
         BufferedReader consoleReader = new BufferedReader(new InputStreamReader(System.in));
 
-        // Prompt for public key and TCP port
         System.out.print("Enter Key: ");
         String key = consoleReader.readLine();
 
         System.out.print("Enter TCP port (unique for this peer): ");
-        int port = Integer.parseInt(consoleReader.readLine());
+        int tcpPort = Integer.parseInt(consoleReader.readLine());
 
-        PeerDiscovery peer = new PeerDiscovery(port, key);
+        System.out.print("Enter UDP port (unique for this peer): ");
+        int udpPort = Integer.parseInt(consoleReader.readLine());
 
-        // Start listening for connections
+        PeerDiscovery peer = new PeerDiscovery(tcpPort, key, udpPort);
+
         peer.startListening();
-
-        // Start broadcasting the public key
         peer.startBroadcasting();
-
-        // Listen for incoming broadcasts
         peer.listenForBroadcasts();
     }
 }
