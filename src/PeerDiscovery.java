@@ -1,6 +1,7 @@
 import java.io.*;
 import java.net.*;
-import java.util.UUID;
+import java.nio.file.*;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -9,16 +10,23 @@ public class PeerDiscovery {
     private final int tcpPort;
     private final String publicKey;
     private final String uniqueId;
-    private final int udpPort; // Unique UDP port for this peer
+    private final int udpPort;
     private final ExecutorService executor = Executors.newCachedThreadPool();
-    private static final int DISCOVERY_PORT_START = 8888; // Start of UDP port range
-    private static final int DISCOVERY_PORT_END = 8898;   // End of UDP port range
+    private static final int DISCOVERY_PORT_START = 8888;
+    private static final int DISCOVERY_PORT_END = 8898;
+    private static final String FILE_STORAGE_DIR = "FileStorage";
 
     public PeerDiscovery(int tcpPort, String publicKey, int udpPort) {
         this.tcpPort = tcpPort;
         this.publicKey = publicKey;
         this.uniqueId = UUID.randomUUID().toString();
         this.udpPort = udpPort;
+
+        // Ensure the FileStorage directory exists
+        File storageDir = new File(FILE_STORAGE_DIR);
+        if (!storageDir.exists()) {
+            storageDir.mkdir();
+        }
     }
 
     // Start listening for TCP connections
@@ -47,6 +55,20 @@ public class PeerDiscovery {
                 if (publicKey.equals(incomingKey)) {
                     writer.println("Connection accepted");
                     System.out.println("Authenticated connection with: " + incomingKey);
+
+                    while (true) {
+                        String command = reader.readLine();
+                        if (command == null) break;
+
+                        switch (command) {
+                            case "LIST_FILES":
+                                listFiles(writer);
+                                break;
+                            case "REQUEST_FILE":
+                                sendFile(reader.readLine(), writer, socket.getOutputStream());
+                                break;
+                        }
+                    }
                 } else {
                     writer.println("Connection denied");
                     System.out.println("Authentication failed for: " + incomingKey);
@@ -57,6 +79,49 @@ public class PeerDiscovery {
             }
         });
     }
+
+    private void listFiles(PrintWriter writer) {
+        File storageDir = new File(FILE_STORAGE_DIR);
+        File[] files = storageDir.listFiles();
+
+        if (files != null) {
+            for (File file : files) {
+                if (file.isFile()) {
+                    writer.println(file.getName() + " (" + file.length() + " bytes)");
+                }
+            }
+        }
+        writer.println("END_OF_LIST");
+    }
+
+    /*
+    private void sendFile(String fileName, PrintWriter writer, OutputStream outputStream) {
+        File file = new File(FILE_STORAGE_DIR, fileName);
+
+        if (!file.exists()) {
+            writer.println("ERROR: File not found");
+            return;
+        }
+
+        try (BufferedInputStream fileReader = new BufferedInputStream(new FileInputStream(file));
+             DataOutputStream dataOut = new DataOutputStream(outputStream)) {
+
+            writer.println("SENDING_FILE");
+            writer.println(fileName);
+            writer.println(file.length());
+
+            byte[] buffer = new byte[1024];
+            int bytesRead;
+            while ((bytesRead = fileReader.read(buffer)) > 0) {
+                dataOut.write(buffer, 0, bytesRead);
+            }
+            dataOut.flush();
+
+            System.out.println("File " + fileName + " sent successfully.");
+        } catch (IOException e) {
+            System.err.println("Error sending file: " + e.getMessage());
+        }
+    }*/
 
     public void startBroadcasting() {
         executor.submit(() -> {
@@ -121,6 +186,24 @@ public class PeerDiscovery {
                 writer.println(publicKey);
                 String response = reader.readLine();
                 System.out.println("Response from peer: " + response);
+
+                if ("Connection accepted".equals(response)) {
+                    // Request and list files
+                    writer.println("LIST_FILES");
+                    System.out.println("Available files:");
+                    String file;
+                    while (!(file = reader.readLine()).equals("END_OF_LIST")) {
+                        System.out.println(file);
+                    }
+
+                    // Request a file (example)
+                    System.out.print("Enter the name of the file to download: ");
+                    BufferedReader console = new BufferedReader(new InputStreamReader(System.in));
+                    String requestedFile = console.readLine();
+
+                    writer.println("REQUEST_FILE");
+                    writer.println(requestedFile);
+                }
             } catch (IOException e) {
                 System.err.println("Error connecting to peer: " + e.getMessage());
             }
