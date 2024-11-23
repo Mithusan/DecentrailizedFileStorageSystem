@@ -65,7 +65,7 @@ public class PeerDiscovery {
                                 listFiles(writer);
                                 break;
                             case "REQUEST_FILE":
-                                sendFile(reader.readLine(), writer, socket.getOutputStream());
+                                //sendFile(reader.readLine(), writer, socket.getOutputStream());
                                 break;
                         }
                     }
