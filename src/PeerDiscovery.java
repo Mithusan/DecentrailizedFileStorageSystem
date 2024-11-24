@@ -13,7 +13,6 @@ public class PeerDiscovery {
     private final ExecutorService executor = Executors.newCachedThreadPool();
     private static final String FILE_STORAGE_DIR = "FileStorage";
 
-    // Connection manager
     private final Map<String, Socket> activeConnections = new HashMap<>();
 
     public PeerDiscovery(int tcpPort, String publicKey, int udpPort) {
