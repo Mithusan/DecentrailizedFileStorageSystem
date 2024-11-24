@@ -5,7 +5,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class PeerDiscovery {
-
     private final int tcpPort;
     private final String publicKey;
     private final String uniqueId;
@@ -35,7 +34,7 @@ public class PeerDiscovery {
     public void startListening() {
         executor.submit(() -> {
             try (ServerSocket serverSocket = new ServerSocket(tcpPort)) {
-                System.out.println("Listening for connections on port: " + tcpPort);
+                //System.out.println("Listening for connections on port: " + tcpPort);
                 while (true) {
                     Socket socket = serverSocket.accept();
                     handleConnection(socket);
@@ -142,7 +141,7 @@ public class PeerDiscovery {
                         DatagramPacket packet = new DatagramPacket(data, data.length, InetAddress.getByName("255.255.255.255"), port);
                         socket.send(packet);
                     }
-                    System.out.println("Broadcasting public key...");
+                    //System.out.println("Broadcasting public key...");
                     Thread.sleep(5000); // Broadcast every 5 seconds
                 }
             } catch (IOException | InterruptedException e) {
@@ -170,7 +169,7 @@ public class PeerDiscovery {
                         continue;
                     }
 
-                    System.out.println("Received broadcasted key: " + receivedKey + " from " + senderAddress);
+                    //System.out.println("Received broadcasted key: " + receivedKey + " from " + senderAddress);
 
                     if (publicKey.equals(receivedKey)) {
                         int peerPort = tcpPort; // Assume peers use the same port
@@ -187,7 +186,7 @@ public class PeerDiscovery {
         executor.submit(() -> {
             synchronized (activeConnections) {
                 if (activeConnections.containsKey(host)) {
-                    System.out.println("Already connected to " + host);
+                    //System.out.println("Already connected to " + host);
                     return;
                 }
             }
@@ -198,7 +197,7 @@ public class PeerDiscovery {
 
                 writer.println(publicKey);
                 String response = reader.readLine();
-                System.out.println("Response from peer: " + response);
+                //System.out.println("Response from peer: " + response);
 
                 if ("Connection accepted".equals(response)) {
                     synchronized (activeConnections) {
