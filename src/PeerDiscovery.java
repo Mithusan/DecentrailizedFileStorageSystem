@@ -12,9 +12,10 @@ public class PeerDiscovery {
     private final String uniqueId;
     private final int udpPort;
     private final ExecutorService executor = Executors.newCachedThreadPool();
-    private static final int DISCOVERY_PORT_START = 8888;
-    private static final int DISCOVERY_PORT_END = 8898;
     private static final String FILE_STORAGE_DIR = "FileStorage";
+
+    // Connection manager
+    private final Map<String, Socket> activeConnections = new HashMap<>();
 
     public PeerDiscovery(int tcpPort, String publicKey, int udpPort) {
         this.tcpPort = tcpPort;
@@ -56,6 +57,13 @@ public class PeerDiscovery {
                     writer.println("Connection accepted");
                     System.out.println("Authenticated connection with: " + incomingKey);
 
+                    // Add connection to activeConnections
+                    String remoteAddress = socket.getInetAddress().getHostAddress();
+                    synchronized (activeConnections) {
+                        activeConnections.put(remoteAddress, socket);
+                    }
+
+                    // Handle commands in the persistent connection
                     while (true) {
                         String command = reader.readLine();
                         if (command == null) break;
@@ -65,7 +73,7 @@ public class PeerDiscovery {
                                 listFiles(writer);
                                 break;
                             case "REQUEST_FILE":
-                                //sendFile(reader.readLine(), writer, socket.getOutputStream());
+                                sendFile(reader.readLine(), writer, socket.getOutputStream());
                                 break;
                         }
                     }
@@ -94,7 +102,6 @@ public class PeerDiscovery {
         writer.println("END_OF_LIST");
     }
 
-    /*
     private void sendFile(String fileName, PrintWriter writer, OutputStream outputStream) {
         File file = new File(FILE_STORAGE_DIR, fileName);
 
@@ -121,7 +128,7 @@ public class PeerDiscovery {
         } catch (IOException e) {
             System.err.println("Error sending file: " + e.getMessage());
         }
-    }*/
+    }
 
     public void startBroadcasting() {
         executor.submit(() -> {
@@ -130,10 +137,9 @@ public class PeerDiscovery {
                 byte[] data = message.getBytes();
 
                 while (true) {
-                    for (int port = DISCOVERY_PORT_START; port <= DISCOVERY_PORT_END; port++) {
-                        DatagramPacket packet = new DatagramPacket(data, data.length, InetAddress.getByName("255.255.255.255"), port);
-                        socket.send(packet);
-                    }
+                    DatagramPacket packet = new DatagramPacket(data, data.length, InetAddress.getByName("255.255.255.255"), udpPort);
+                    socket.send(packet);
+
                     System.out.println("Broadcasting public key...");
                     Thread.sleep(5000); // Broadcast every 5 seconds
                 }
@@ -166,8 +172,6 @@ public class PeerDiscovery {
 
                     if (publicKey.equals(receivedKey)) {
                         int peerPort = tcpPort; // Assume peers use the same port
-                        System.out.println("Matching public key found! Connecting to peer: " + senderAddress);
-
                         connectToPeer(senderAddress, peerPort);
                     }
                 }
@@ -179,6 +183,13 @@ public class PeerDiscovery {
 
     private void connectToPeer(String host, int peerPort) {
         executor.submit(() -> {
+            synchronized (activeConnections) {
+                if (activeConnections.containsKey(host)) {
+                    System.out.println("Already connected to " + host);
+                    return;
+                }
+            }
+
             try (Socket socket = new Socket(host, peerPort);
                  PrintWriter writer = new PrintWriter(socket.getOutputStream(), true);
                  BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()))) {
@@ -188,21 +199,9 @@ public class PeerDiscovery {
                 System.out.println("Response from peer: " + response);
 
                 if ("Connection accepted".equals(response)) {
-                    // Request and list files
-                    writer.println("LIST_FILES");
-                    System.out.println("Available files:");
-                    String file;
-                    while (!(file = reader.readLine()).equals("END_OF_LIST")) {
-                        System.out.println(file);
+                    synchronized (activeConnections) {
+                        activeConnections.put(host, socket);
                     }
-
-                    // Request a file (example)
-                    System.out.print("Enter the name of the file to download: ");
-                    BufferedReader console = new BufferedReader(new InputStreamReader(System.in));
-                    String requestedFile = console.readLine();
-
-                    writer.println("REQUEST_FILE");
-                    writer.println(requestedFile);
                 }
             } catch (IOException e) {
                 System.err.println("Error connecting to peer: " + e.getMessage());
