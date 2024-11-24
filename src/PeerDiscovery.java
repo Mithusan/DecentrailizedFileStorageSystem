@@ -1,6 +1,5 @@
 import java.io.*;
 import java.net.*;
-import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -73,7 +72,6 @@ public class PeerDiscovery {
                                 listFiles(writer);
                                 break;
                             case "REQUEST_FILE":
-                                sendFile(reader.readLine(), writer, socket.getOutputStream());
                                 break;
                         }
                     }
@@ -102,33 +100,6 @@ public class PeerDiscovery {
         writer.println("END_OF_LIST");
     }
 
-    private void sendFile(String fileName, PrintWriter writer, OutputStream outputStream) {
-        File file = new File(FILE_STORAGE_DIR, fileName);
-
-        if (!file.exists()) {
-            writer.println("ERROR: File not found");
-            return;
-        }
-
-        try (BufferedInputStream fileReader = new BufferedInputStream(new FileInputStream(file));
-             DataOutputStream dataOut = new DataOutputStream(outputStream)) {
-
-            writer.println("SENDING_FILE");
-            writer.println(fileName);
-            writer.println(file.length());
-
-            byte[] buffer = new byte[1024];
-            int bytesRead;
-            while ((bytesRead = fileReader.read(buffer)) > 0) {
-                dataOut.write(buffer, 0, bytesRead);
-            }
-            dataOut.flush();
-
-            System.out.println("File " + fileName + " sent successfully.");
-        } catch (IOException e) {
-            System.err.println("Error sending file: " + e.getMessage());
-        }
-    }
 
     public void startBroadcasting() {
         executor.submit(() -> {
@@ -171,7 +142,7 @@ public class PeerDiscovery {
                     System.out.println("Received broadcasted key: " + receivedKey + " from " + senderAddress);
 
                     if (publicKey.equals(receivedKey)) {
-                        int peerPort = tcpPort; // Assume peers use the same port
+                        int peerPort = tcpPort; 
                         connectToPeer(senderAddress, peerPort);
                     }
                 }
