@@ -203,6 +203,14 @@ public class PeerDiscovery {
                     synchronized (activeConnections) {
                         activeConnections.put(host, socket);
                     }
+
+                    // Send LIST_FILES command after connection is established
+                    writer.println("LIST_FILES");
+                    System.out.println("Available files from " + host + ":");
+                    String file;
+                    while (!(file = reader.readLine()).equals("END_OF_LIST")) {
+                        System.out.println(file);
+                    }
                 }
             } catch (IOException e) {
                 System.err.println("Error connecting to peer: " + e.getMessage());
