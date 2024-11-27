@@ -18,6 +18,7 @@ public class Peer {
 
     // Connection manager
     private final Map<String, PeerConnection> activeConnections = new HashMap<>();
+    private final Map<String, PeerConnection> hostConnections = new HashMap<>();
 
     public Peer(int tcpPort, String publicKey, int udpPort) {
         this.tcpPort = tcpPort;
@@ -50,12 +51,12 @@ public class Peer {
     public void startBroadcasting() {
         executor.submit(() -> {
             try (DatagramSocket socket = new DatagramSocket()) {
-                String message = uniqueId + "|" + publicKey;
+                String message = uniqueId + "|" + publicKey + "|" + tcpPort;
                 byte[] data = message.getBytes();
 
                 while (true) {
                     for (int port = DISCOVERY_PORT_START; port <= DISCOVERY_PORT_END; port++) {
-                        DatagramPacket packet = new DatagramPacket(data, data.length, InetAddress.getByName("255.255.255.255"), port);
+                        DatagramPacket packet = new DatagramPacket(data, data.length, InetAddress.getByName("255.255.255.255"),port);
                         socket.send(packet);
                     }
                     //System.out.println("Broadcasting public key...");
@@ -80,17 +81,18 @@ public class Peer {
 
                     String senderId = parts[0];
                     String receivedKey = parts[1];
+                    String peerPort = parts[2];
+        
                     String senderAddress = packet.getAddress().getHostAddress();
 
                     if (senderId.equals(uniqueId)) {
                         continue;
                     }
-
-                    //System.out.println("Received broadcasted key: " + receivedKey + " from " + senderAddress);
+                    //System.out.println(peerPort);
+                    System.out.println("Received broadcasted key: " + receivedKey + " from " + senderAddress);
 
                     if (publicKey.equals(receivedKey)) {
-                        int peerPort = tcpPort; // Assume peers use the same port
-                        connectToPeer(senderAddress, peerPort);
+                        connectToPeer(senderAddress, Integer.parseInt(peerPort));
                     }
                 }
             } catch (IOException e) {
@@ -109,7 +111,7 @@ public class Peer {
                 OutputStream outputStream = socket.getOutputStream();
 
                 String incomingKey = reader.readLine();
-                //System.out.println("Connection attempt from public key: " + incomingKey);
+                System.out.println("Connection attempt from public key: " + incomingKey);
 
                 if (publicKey.equals(incomingKey)) {
                     writer.println("Connection accepted");
@@ -142,9 +144,9 @@ public class Peer {
 
     private void connectToPeer(String host, int peerPort) {
         executor.submit(() -> {
-            synchronized (activeConnections) {
-                if (activeConnections.containsKey(host)) {
-                    //System.out.println("Already connected to " + host);
+            synchronized (hostConnections) {
+                if (hostConnections.containsKey(host)) {
+                    System.out.println("Already connected to " + host);
                     return;
                 }
             }
@@ -159,11 +161,11 @@ public class Peer {
 
                 writer.println(publicKey);
                 String response = reader.readLine();
-                //System.out.println("Response from peer: " + response);
+                System.out.println("Response from peer: " + response);
 
                 if ("Connection accepted".equals(response)) {
-                    synchronized (activeConnections) {
-                        activeConnections.put(host, peerConnection);
+                    synchronized (hostConnections) {
+                        hostConnections.put(host, peerConnection);
                     }
 
                     // Start sending file list every 5 seconds
