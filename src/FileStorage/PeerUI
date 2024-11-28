@@ -1,0 +1,128 @@
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.util.List;
+
+public class PeerUI {
+    private Peer peer;
+    
+    // Swing components
+    private JFrame frame;
+    private JList<String> fileList;
+    private DefaultListModel<String> fileListModel;
+    private JTextField fileNameField;
+    private JButton downloadButton;
+    private JButton uploadButton;
+    private JTextArea messageArea;
+
+    public PeerUI() {
+        // Initialize peer with your required ports and keys
+        peer = new Peer(12345, "somePublicKey", 54321, this);
+
+        // Set up the UI components
+        frame = new JFrame("Peer-to-Peer File Sharing");
+        fileListModel = new DefaultListModel<>();
+        fileList = new JList<>(fileListModel);
+        fileNameField = new JTextField(20);
+        downloadButton = new JButton("Download File");
+        uploadButton = new JButton("Upload File");
+        messageArea = new JTextArea(10, 30);
+        messageArea.setEditable(false);
+
+        // Set up layout
+        frame.setLayout(new BorderLayout());
+
+        // North panel for file name input and buttons
+        JPanel topPanel = new JPanel();
+        topPanel.add(new JLabel("Enter filename:"));
+        topPanel.add(fileNameField);
+        topPanel.add(uploadButton);
+        topPanel.add(downloadButton);
+
+        // Center panel for file list
+        JPanel centerPanel = new JPanel();
+        centerPanel.add(new JScrollPane(fileList));
+
+        // South panel for message area
+        JPanel bottomPanel = new JPanel();
+        bottomPanel.add(new JScrollPane(messageArea));
+
+        // Add components to the frame
+        frame.add(topPanel, BorderLayout.NORTH);
+        frame.add(centerPanel, BorderLayout.CENTER);
+        frame.add(bottomPanel, BorderLayout.SOUTH);
+
+        // Action listeners for buttons
+        downloadButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                downloadFile();
+            }
+        });
+
+        uploadButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                uploadFile();
+            }
+        });
+
+        // Set frame properties
+        frame.setSize(400, 400);
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setVisible(true);
+
+        // Start listening and broadcasting
+        peer.startListening();
+        peer.startBroadcasting();
+        peer.listenForBroadcasts();
+
+        // Update file list when available
+        updateFileList();
+    }
+
+    // Method to update the file list
+    public void updateFileList() {
+        List<String> availableFiles = peer.getAvailableFiles();
+        fileListModel.clear();
+        for (String file : availableFiles) {
+            fileListModel.addElement(file);
+        }
+    }
+
+    // Method to handle file download
+    private void downloadFile() {
+        String selectedFile = fileList.getSelectedValue();
+        if (selectedFile != null) {
+            peer.requestFile(selectedFile);
+            peer.downloadFile(selectedFile);
+        } else {
+            showMessage("Please select a file to download.");
+        }
+    }
+
+    // Method to handle file upload
+    private void uploadFile() {
+        String fileName = fileNameField.getText();
+        if (fileName != null && !fileName.isEmpty()) {
+            peer.downloadFile(fileName); // Assuming downloadFile is responsible for the upload too
+        } else {
+            showMessage("Please enter a file name.");
+        }
+    }
+
+    // Method to display messages in the UI
+    public void showMessage(String message) {
+        messageArea.append(message + "\n");
+    }
+
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(new Runnable() {
+            @Override
+            public void run() {
+                new PeerUI();
+            }
+        });
+    }
+}

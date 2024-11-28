@@ -1,8 +1,10 @@
 import java.io.*;
 import java.net.*;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+
 
 public class Peer {
     private final int tcpPort;
@@ -17,8 +19,8 @@ public class Peer {
 
 
     // Connection manager
-    private final Map<String, PeerConnection> activeConnections = new HashMap<>();
-    private final Map<String, PeerConnection> hostConnections = new HashMap<>();
+    private final Map<String, PeerConnection> activeConnections = new ConcurrentHashMap<>();
+    private final Map<String, PeerConnection> hostConnections = new ConcurrentHashMap<>();
 
     public Peer(int tcpPort, String publicKey, int udpPort) {
         this.tcpPort = tcpPort;
@@ -81,18 +83,22 @@ public class Peer {
 
                     String senderId = parts[0];
                     String receivedKey = parts[1];
-                    String peerPort = parts[2];
+                    int peerPort = Integer.parseInt(parts[2]);
         
                     String senderAddress = packet.getAddress().getHostAddress();
+                    //System.out.println(senderAddress);
+                    String connectionKey = senderAddress + ":" + peerPort;
 
                     if (senderId.equals(uniqueId)) {
                         continue;
                     }
                     //System.out.println(peerPort);
-                    System.out.println("Received broadcasted key: " + receivedKey + " from " + senderAddress);
+                    //System.out.println("Received broadcasted key: " + receivedKey + " from " + senderAddress);
 
                     if (publicKey.equals(receivedKey)) {
-                        connectToPeer(senderAddress, Integer.parseInt(peerPort));
+                        if (!hostConnections.containsKey(connectionKey)) {
+                            connectToPeer(senderAddress, peerPort);
+                        }
                     }
                 }
             } catch (IOException e) {
@@ -111,7 +117,7 @@ public class Peer {
                 OutputStream outputStream = socket.getOutputStream();
 
                 String incomingKey = reader.readLine();
-                System.out.println("Connection attempt from public key: " + incomingKey);
+                //System.out.println("Connection attempt from public key: " + incomingKey);
 
                 if (publicKey.equals(incomingKey)) {
                     writer.println("Connection accepted");
@@ -119,16 +125,17 @@ public class Peer {
 
                     // Add connection to activeConnections
                     String remoteAddress = socket.getInetAddress().getHostAddress();
-                    synchronized (activeConnections) {
-                        activeConnections.put(remoteAddress, peerConnection);
-                    }
-
-                    // Read file list from the peer
-                    peerConnection.receiveFileList();
+                
+                    activeConnections.put(remoteAddress, peerConnection);
 
                     while (true) {
-                        if (socket.isClosed()) {
-                            break;
+                        // Read file list from the peer
+                        //peerConnection.receiveFileList();
+
+                        String request = reader.readLine();
+                        if (request.startsWith("REQUEST_FILE")) {
+                            String requestedFileName = request.split("\\|")[1];
+                            peerConnection.sendFile(requestedFileName);
                         }
                     }
                 } else {
@@ -142,46 +149,37 @@ public class Peer {
         });
     }
 
-    private void connectToPeer(String host, int peerPort) {
-        executor.submit(() -> {
-            synchronized (hostConnections) {
-                if (hostConnections.containsKey(host)) {
-                    System.out.println("Already connected to " + host);
-                    return;
-                }
-            }
+    private void connectToPeer(String host, int peerPort) { 
+            executor.submit(() -> { 
+                try (Socket socket = new Socket(host, peerPort)){
+                    PeerConnection peerConnection = new PeerConnection(socket);
 
-            try (Socket socket = new Socket(host, peerPort)){
-                PeerConnection peerConnection = new PeerConnection(socket);
+                    PrintWriter writer = new PrintWriter(socket.getOutputStream(), true);
+                    BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                    String connectionKey = host + ":" + peerPort;
 
-                PrintWriter writer = new PrintWriter(socket.getOutputStream(), true);
-                BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                InputStream inputStream = socket.getInputStream();
+                    writer.println(publicKey);
+                    String response = reader.readLine();
+                    //System.out.println("Response from peer: " + response);
 
-
-                writer.println(publicKey);
-                String response = reader.readLine();
-                System.out.println("Response from peer: " + response);
-
-                if ("Connection accepted".equals(response)) {
-                    synchronized (hostConnections) {
-                        hostConnections.put(host, peerConnection);
-                    }
-
-                    // Start sending file list every 5 seconds
-                    peerConnection.startFileListUpdates();
-
-                    while (true) {
-                        if (socket.isClosed()) {
-                            break;
+                    if ("Connection accepted".equals(response)) {
+                        hostConnections.put(connectionKey, peerConnection);
+                        
+                        while (true) {
+                            //writer.println("REQUEST_FILE|" + fileName); // Request a file from the peer
+                            //peerConnection.receiveFile(); // Receive and save the file
+                            //peerConnection.sendFileList();
+                            //Thread.sleep(5000);
                         }
                     }
-                }
-            } catch (IOException e) {
-                System.err.println("Error connecting to peer: " + e.getMessage());
-            }
-        });
+                } catch (IOException e) {
+                    System.err.println("Error connecting to peer: " + e.getMessage());
+                } //catch (InterruptedException e) {
+                  //  System.err.println("File list update thread interrupted: " + e.getMessage());
+                //}
+            });
     }
+
 
     public static void main(String[] args) throws IOException {
         BufferedReader consoleReader = new BufferedReader(new InputStreamReader(System.in));
