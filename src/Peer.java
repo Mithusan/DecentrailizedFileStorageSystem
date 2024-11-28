@@ -1,10 +1,12 @@
 import java.io.*;
 import java.net.*;
+import java.nio.file.Files;
+import java.security.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-
+import javax.swing.*;
 
 public class Peer {
     private final int tcpPort;
@@ -17,11 +19,13 @@ public class Peer {
     private static final String FILE_STORAGE_DIR = "FileStorage";
     private static final BufferedReader consoleReader = new BufferedReader(new InputStreamReader(System.in));
 
-
     // Connection manager
     private final Map<String, PeerConnection> activeConnections = new ConcurrentHashMap<>();
-    private final Map<String, PeerConnection> hostConnections = new ConcurrentHashMap<>();
+    private static final Map<String, PeerConnection> hostConnections = new ConcurrentHashMap<>();
 
+    // Store file lists received from peers
+    private final Map<String, List<String>> peerFileLists = new ConcurrentHashMap<>();
+    private Scanner scanner=new Scanner(System.in);
     public Peer(int tcpPort, String publicKey, int udpPort) {
         this.tcpPort = tcpPort;
         this.publicKey = publicKey;
@@ -33,6 +37,45 @@ public class Peer {
         if (!storageDir.exists()) {
             storageDir.mkdir();
         }
+    }
+
+    public static Map<String, PeerConnection> getConnections() {
+        return hostConnections;
+    }
+
+    // Method to check if public key exists, otherwise generate it
+    private static String loadOrGeneratePublicKey() throws Exception {
+        File publicKeyFile = new File("public_key.pem");
+
+        if (publicKeyFile.exists()) {
+            // Read the public key from the file
+            return new String(Files.readAllBytes(publicKeyFile.toPath()));
+        } else {
+            int userSelect = JOptionPane.showConfirmDialog(
+                null,
+                "No Public Key Found. Would you like to generate a key?",
+                "Generate Key?",
+                JOptionPane.YES_NO_OPTION
+                );
+            
+            if (userSelect == JOptionPane.YES_OPTION){
+                // Generate a new key pair and save the public key
+                KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("RSA");
+                keyPairGenerator.initialize(2048);
+                KeyPair keyPair = keyPairGenerator.generateKeyPair();
+
+                // Save public key to file
+                try (BufferedWriter writer = new BufferedWriter(new FileWriter(publicKeyFile))) {
+                    writer.write(Base64.getEncoder().encodeToString(keyPair.getPublic().getEncoded()));
+                }
+
+                return Base64.getEncoder().encodeToString(keyPair.getPublic().getEncoded());
+            } else if (userSelect == JOptionPane.NO_OPTION){
+                JOptionPane.showMessageDialog(null, "You need a Key to Proceed.");
+                System.exit(0);
+            }
+        }
+        return null;
     }
 
     // Start listening for TCP connections
@@ -75,7 +118,7 @@ public class Peer {
             try (DatagramSocket socket = new DatagramSocket(udpPort)) {
                 byte[] buffer = new byte[1024];
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
-
+                
                 while (true) {
                     socket.receive(packet);
                     String receivedMessage = new String(packet.getData(), 0, packet.getLength());
@@ -84,10 +127,11 @@ public class Peer {
                     String senderId = parts[0];
                     String receivedKey = parts[1];
                     int peerPort = Integer.parseInt(parts[2]);
-        
+                    
                     String senderAddress = packet.getAddress().getHostAddress();
                     //System.out.println(senderAddress);
                     String connectionKey = senderAddress + ":" + peerPort;
+                    
 
                     if (senderId.equals(uniqueId)) {
                         continue;
@@ -117,25 +161,34 @@ public class Peer {
                 OutputStream outputStream = socket.getOutputStream();
 
                 String incomingKey = reader.readLine();
+                int remoteListeningPort = Integer.parseInt(reader.readLine());
                 //System.out.println("Connection attempt from public key: " + incomingKey);
 
                 if (publicKey.equals(incomingKey)) {
-                    writer.println("Connection accepted");
-                    System.out.println("Authenticated connection with: " + incomingKey);
-
                     // Add connection to activeConnections
                     String remoteAddress = socket.getInetAddress().getHostAddress();
-                
+                    String connectionKey = remoteAddress + ":" + remoteListeningPort;
+
+                    writer.println("Connection accepted");
+                    System.out.println("Authenticated connection > " + connectionKey);
+
                     activeConnections.put(remoteAddress, peerConnection);
 
-                    while (true) {
-                        // Read file list from the peer
-                        //peerConnection.receiveFileList();
+                    executor.submit(() -> {
+                        while (true) {
+                            String request = reader.readLine();
+                            if (request.startsWith("REQUEST_FILE")) {
+                                String requestedFileName = request.split("\\|")[1];
+                                peerConnection.sendFile(requestedFileName);
+                            }
+                        }
+                    });
 
-                        String request = reader.readLine();
-                        if (request.startsWith("REQUEST_FILE")) {
-                            String requestedFileName = request.split("\\|")[1];
-                            peerConnection.sendFile(requestedFileName);
+
+                    while (true) {
+                        List<String> receivedFiles = peerConnection.receiveFileList();
+                        if (!receivedFiles.isEmpty()) {
+                            peerFileLists.put(connectionKey, receivedFiles);
                         }
                     }
                 } else {
@@ -150,53 +203,125 @@ public class Peer {
     }
 
     private void connectToPeer(String host, int peerPort) { 
-            executor.submit(() -> { 
-                try (Socket socket = new Socket(host, peerPort)){
-                    PeerConnection peerConnection = new PeerConnection(socket);
+        executor.submit(() -> { 
+            try (Socket socket = new Socket(host, peerPort)){
+                PeerConnection peerConnection = new PeerConnection(socket);
 
-                    PrintWriter writer = new PrintWriter(socket.getOutputStream(), true);
-                    BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                    String connectionKey = host + ":" + peerPort;
+                PrintWriter writer = new PrintWriter(socket.getOutputStream(), true);
+                BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                String connectionKey = host + ":" + peerPort;
 
-                    writer.println(publicKey);
-                    String response = reader.readLine();
-                    //System.out.println("Response from peer: " + response);
+                writer.println(publicKey);
+                writer.println(tcpPort);
+                String response = reader.readLine();
+                //System.out.println("Response from peer: " + response);
 
-                    if ("Connection accepted".equals(response)) {
-                        hostConnections.put(connectionKey, peerConnection);
-                        
-                        while (true) {
-                            //writer.println("REQUEST_FILE|" + fileName); // Request a file from the peer
-                            //peerConnection.receiveFile(); // Receive and save the file
-                            //peerConnection.sendFileList();
-                            //Thread.sleep(5000);
+                if ("Connection accepted".equals(response)) {
+                    hostConnections.put(connectionKey, peerConnection);
+                    
+                    executor.submit(() -> {
+                        try {
+                            while (true) {
+                                String userInput = consoleReader.readLine();
+                                if ("/list".equalsIgnoreCase(userInput)||"/ls".equalsIgnoreCase(userInput)) {
+                                    System.out.println("Files available from peers:");
+                                    for (Map.Entry<String, List<String>> entry : peerFileLists.entrySet()) {
+                                        String peerAddress = entry.getKey();
+                                        List<String> files = entry.getValue();
+                                        System.out.println(peerAddress + ": " + files);
+                                    }
+
+                                } else if ("/clients".equalsIgnoreCase(userInput)||"/all".equalsIgnoreCase(userInput)) {
+                                    System.out.println("Connected clients:");
+                                    for (String client : hostConnections.keySet()) {
+                                        System.out.println(client);
+                                    }
+
+                                } else if(userInput.startsWith("/download")||userInput.startsWith("/d")){
+                                    String[] commandParts = userInput.split("\\s+", 2);
+                                    if (commandParts.length < 2) {
+                                        System.out.println("Usage: /download <fileName>");
+                                    } else {
+                                        String fileName = commandParts[1];
+
+                                        // Iterate through peers to find the file
+                                        boolean fileRequested = false;
+                                        for (Map.Entry<String, List<String>> entry : peerFileLists.entrySet()) {
+                                            String peerAddress = entry.getKey();
+                                            List<String> files = entry.getValue();
+
+                                            if (files.contains(fileName)) {
+                                                System.out.println("Requesting file \"" + fileName + "\" from " + peerAddress);
+
+                                                PeerConnection connection = hostConnections.get(peerAddress);
+                                                if (connection != null) {
+                                                    connection.downloadFile(fileName);
+                                                    fileRequested = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+
+                                        if (!fileRequested) {
+                                            System.out.println("File \"" + fileName + "\" not found among connected peers.");
+                                        }
+                                    }
+                                }
+                                else if(userInput.startsWith("/upload")||userInput.startsWith("/u")){
+                                    peerConnection.uploadFile();
+
+                                }
+                                else if(userInput.startsWith("/help")||userInput.startsWith("/h")){
+                                    System.out.println("use the following valid commands:\n-------------------\n - /list or /ls \t provides list of avaialble files\n - /clients or /all \t provides list of all connected clients");
+                                    System.out.println(" - /download <fileName> or /d <fileName>\t allows download if file is available\n - /upload or /u \t uploads selected file into your FileStorage\n-------------------");
+                                }
+                                else{
+                                    System.out.println("Invalid Command: \""+userInput+"\" unrecognized!");
+                                }
+
+                            }
+                        } catch (IOException e) {
+                            System.err.println("Error reading user input: " + e.getMessage());
                         }
+                    });
+
+                    while (true) {
+                        peerConnection.sendFileList();
+                        Thread.sleep(5000);
                     }
-                } catch (IOException e) {
-                    System.err.println("Error connecting to peer: " + e.getMessage());
-                } //catch (InterruptedException e) {
-                  //  System.err.println("File list update thread interrupted: " + e.getMessage());
-                //}
-            });
+                }
+            } catch (IOException e) {
+                System.err.println("Error connecting to peer: " + e.getMessage());
+            } catch (InterruptedException e) {
+                System.err.println("File list update thread interrupted: " + e.getMessage());
+            }
+        });
     }
 
-
+    public PeerConnection getConnectionForClient(String clientId) {
+        return hostConnections.get(clientId);
+    }
+    
     public static void main(String[] args) throws IOException {
-        BufferedReader consoleReader = new BufferedReader(new InputStreamReader(System.in));
+        try {
+            String key = loadOrGeneratePublicKey();
 
-        System.out.print("Enter Key: ");
-        String key = consoleReader.readLine();
+            BufferedReader consoleReader = new BufferedReader(new InputStreamReader(System.in));
 
-        System.out.print("Enter TCP port (unique for this peer): ");
-        int tcpPort = Integer.parseInt(consoleReader.readLine());
+            System.out.print("Enter TCP port (unique for this peer): ");
+            int tcpPort = Integer.parseInt(consoleReader.readLine());
 
-        System.out.print("Enter UDP port (unique for this peer): ");
-        int udpPort = Integer.parseInt(consoleReader.readLine());
+            System.out.print("Enter UDP port (unique for this peer): ");
+            int udpPort = Integer.parseInt(consoleReader.readLine());
 
-        Peer peer = new Peer(tcpPort, key, udpPort);
+            Peer peer = new Peer(tcpPort, key, udpPort);
 
-        peer.startListening();
-        peer.startBroadcasting();
-        peer.listenForBroadcasts();
+            peer.startListening();
+            peer.startBroadcasting();
+            peer.listenForBroadcasts();
+        } catch (Exception e) {
+            System.out.println(e);
+        }
     }
+    
 }

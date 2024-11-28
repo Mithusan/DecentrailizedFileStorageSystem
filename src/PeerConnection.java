@@ -1,10 +1,14 @@
 import java.io.*;
 import java.net.*;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Timer;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import javax.swing.*;
+
 
 public class PeerConnection {
     private final Socket socket;
@@ -43,25 +47,29 @@ public class PeerConnection {
     }
 
     // Method to read the file list from a peer
-    public void receiveFileList() {
+    public List<String> receiveFileList() {
+        List<String> receivedFiles = new ArrayList<>();
+
         try {
             BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                while (true) { // Keep listening for file lists
-                    String line;
-                    List<String> receivedFiles = new ArrayList<>();
+            String line;
 
-                    while ((line = reader.readLine()) != null) {
-                        if ("END_OF_LIST".equals(line)) {
-                            break; // End of the file list
-                        }
-                        receivedFiles.add(line); // Add file to the list
-                    }
+            String clientAddress = socket.getInetAddress().getHostAddress();
+            int clientPort = socket.getPort();
 
-                    System.out.println("Received file list: " + receivedFiles);
+            while ((line = reader.readLine()) != null) {
+                if ("END_OF_LIST".equals(line)) {
+                    break; // End of the file list
                 }
+                receivedFiles.add(line); // Add file to the list
+            }
+
+            //System.out.println("Received file list from " + clientAddress + ":" + clientPort + "\n" + receivedFiles);
         } catch (IOException e) {
             System.err.println("Error receiving file list: " + e.getMessage());
         }
+
+        return receivedFiles;
     }
 
     // Send a file to the connected peer
@@ -71,10 +79,10 @@ public class PeerConnection {
             if (file.exists() && file.isFile()) {
                 // Notify the peer about the file transfer
                 writer.println("FILE_TRANSFER_START|" + fileName + "|" + file.length());
-                
+
                 // Send file bytes
                 try (FileInputStream fis = new FileInputStream(file);
-                    BufferedOutputStream bos = new BufferedOutputStream(socket.getOutputStream())) {
+                     BufferedOutputStream bos = new BufferedOutputStream(socket.getOutputStream())) {
                     byte[] buffer = new byte[4096];
                     int bytesRead;
                     while ((bytesRead = fis.read(buffer)) != -1) {
@@ -92,15 +100,19 @@ public class PeerConnection {
     }
 
     // Receive a file from the connected peer
-    public void receiveFile() {
+    public void downloadFile(String fileName) {
         try {
+            // Send request for the file
+            writer.println("REQUEST_FILE|" + fileName);
+
+            // Wait for the file transfer
             String header = reader.readLine();
             if (header != null && header.startsWith("FILE_TRANSFER_START")) {
                 String[] parts = header.split("\\|");
-                String fileName = parts[1];
+                String receivedFileName = parts[1];
                 long fileSize = Long.parseLong(parts[2]);
 
-                File file = new File(FILE_STORAGE_DIR, fileName);
+                File file = new File(FILE_STORAGE_DIR, receivedFileName);
                 try (FileOutputStream fos = new FileOutputStream(file);
                     BufferedInputStream bis = new BufferedInputStream(socket.getInputStream())) {
                     byte[] buffer = new byte[4096];
@@ -111,13 +123,51 @@ public class PeerConnection {
                         fos.write(buffer, 0, bytesRead);
                         totalRead += bytesRead;
                     }
-                    System.out.println("File received: " + fileName);
+
+                    System.out.println("File downloaded: " + receivedFileName);
                 }
+            } else if (header != null && header.startsWith("ERROR")) {
+                System.out.println("Error from peer: " + header.split("\\|")[1]);
             } else {
-                System.out.println("Invalid file transfer request");
+                System.out.println("Unexpected response from peer.");
             }
         } catch (IOException e) {
-            System.err.println("Error receiving file: " + e.getMessage());
+            System.err.println("Error downloading file: " + e.getMessage());
+        }finally {
+    try {
+        if (!socket.isClosed()) {
+            socket.close();
         }
+    } catch (IOException e) {
+        System.err.println("Error closing socket: " + e.getMessage());
+    }
+    }
+
+
+    public String getClientIdentifier() {
+        return socket.getInetAddress().getHostAddress()+ ":" + socket.getPort();
+    }
+
+    public void uploadFile() {
+
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setDialogTitle("Select file to upload");
+
+        int result = fileChooser.showOpenDialog(null);
+        if (result == JFileChooser.APPROVE_OPTION) {
+            File selectedFile = fileChooser.getSelectedFile();
+            File destination = new File(FILE_STORAGE_DIR, selectedFile.getName());
+            try {
+                Files.copy(selectedFile.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                System.out.println("File uploaded successfully: " + selectedFile.getName());
+
+                sendFileList();
+            } catch (IOException e) {
+                System.err.println("Error uploading file: " + e.getMessage());
+            }
+        } else {
+            System.out.println("No file selected.");
+        }
+
     }
 }
