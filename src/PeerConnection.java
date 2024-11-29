@@ -81,8 +81,8 @@ public class PeerConnection {
                 writer.println("FILE_TRANSFER_START|" + fileName + "|" + file.length());
 
                 // Send file bytes
-                try (FileInputStream fis = new FileInputStream(file);
-                     BufferedOutputStream bos = new BufferedOutputStream(socket.getOutputStream())) {
+                try (FileInputStream fis = new FileInputStream(file)) {
+                    BufferedOutputStream bos = new BufferedOutputStream(socket.getOutputStream());
                     byte[] buffer = new byte[4096];
                     int bytesRead;
                     while ((bytesRead = fis.read(buffer)) != -1) {
@@ -105,7 +105,7 @@ public class PeerConnection {
             // Send request for the file
             writer.println("REQUEST_FILE|" + fileName);
 
-            // Wait for the file transfer
+            // Wait for the file transferflush
             String header = reader.readLine();
             if (header != null && header.startsWith("FILE_TRANSFER_START")) {
                 String[] parts = header.split("\\|");
@@ -113,8 +113,8 @@ public class PeerConnection {
                 long fileSize = Long.parseLong(parts[2]);
 
                 File file = new File(FILE_STORAGE_DIR, receivedFileName);
-                try (FileOutputStream fos = new FileOutputStream(file);
-                    BufferedInputStream bis = new BufferedInputStream(socket.getInputStream())) {
+                try (FileOutputStream fos = new FileOutputStream(file)) {
+                    BufferedInputStream bis = new BufferedInputStream(socket.getInputStream());
                     byte[] buffer = new byte[4096];
                     int bytesRead;
                     long totalRead = 0;
@@ -123,7 +123,7 @@ public class PeerConnection {
                         fos.write(buffer, 0, bytesRead);
                         totalRead += bytesRead;
                     }
-
+                    fos.flush();
                     System.out.println("File downloaded: " + receivedFileName);
                 }
             } else if (header != null && header.startsWith("ERROR")) {
@@ -133,16 +133,9 @@ public class PeerConnection {
             }
         } catch (IOException e) {
             System.err.println("Error downloading file: " + e.getMessage());
-        }finally {
-    try {
-        if (!socket.isClosed()) {
-            socket.close();
         }
-    } catch (IOException e) {
-        System.err.println("Error closing socket: " + e.getMessage());
-    }
-    }
 
+    }
 
     public String getClientIdentifier() {
         return socket.getInetAddress().getHostAddress()+ ":" + socket.getPort();
@@ -170,4 +163,22 @@ public class PeerConnection {
         }
 
     }
+
+    public void close() throws IOException {
+        if (socket != null && !socket.isClosed()) {
+            socket.close();
+        }
+        writer.close();
+        reader.close();
+        timer.cancel();
+    }
+
+    public void sendDisconnectNotification() {
+        try {
+            writer.println("DISCONNECT|" + getClientIdentifier());
+        } catch (Exception e) {
+            System.err.println("Error sending disconnect notification: " + e.getMessage());
+        }
+    }
+
 }

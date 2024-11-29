@@ -14,8 +14,8 @@ public class Peer {
     private final String uniqueId;
     private final int udpPort;
     private final ExecutorService executor = Executors.newCachedThreadPool();
-    private static final int DISCOVERY_PORT_START = 8888;
-    private static final int DISCOVERY_PORT_END = 8898;
+    private static final int DISCOVERY_PORT_START = 8000;
+    private static final int DISCOVERY_PORT_END = 8010;
     private static final String FILE_STORAGE_DIR = "FileStorage";
     private static final BufferedReader consoleReader = new BufferedReader(new InputStreamReader(System.in));
 
@@ -174,19 +174,20 @@ public class Peer {
 
                     activeConnections.put(remoteAddress, peerConnection);
 
-                    executor.submit(() -> {
-                        while (true) {
-                            String request = reader.readLine();
-                            if (request.startsWith("REQUEST_FILE")) {
-                                String requestedFileName = request.split("\\|")[1];
-                                peerConnection.sendFile(requestedFileName);
-                            }
-                        }
-                    });
-
-
                     while (true) {
                         List<String> receivedFiles = peerConnection.receiveFileList();
+                        String request = reader.readLine();
+                        if (request.startsWith("REQUEST_FILE")) {
+                            String requestedFileName = request.split("\\|")[1];
+                            peerConnection.sendFile(requestedFileName);
+                        } else if (request.startsWith("DISCONNECT")){
+                            String disconnectedClient = request.split("\\|")[1];
+                            activeConnections.remove(disconnectedClient);
+                            peerFileLists.remove(disconnectedClient);
+                            System.out.println("Peer disconnected: " + disconnectedClient);
+                        }
+
+                        
                         if (!receivedFiles.isEmpty()) {
                             peerFileLists.put(connectionKey, receivedFiles);
                         }
@@ -210,7 +211,7 @@ public class Peer {
                 PrintWriter writer = new PrintWriter(socket.getOutputStream(), true);
                 BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                 String connectionKey = host + ":" + peerPort;
-
+                
                 writer.println(publicKey);
                 writer.println(tcpPort);
                 String response = reader.readLine();
@@ -274,6 +275,23 @@ public class Peer {
                                 else if(userInput.startsWith("/help")||userInput.startsWith("/h")){
                                     System.out.println("use the following valid commands:\n-------------------\n - /list or /ls \t provides list of avaialble files\n - /clients or /all \t provides list of all connected clients");
                                     System.out.println(" - /download <fileName> or /d <fileName>\t allows download if file is available\n - /upload or /u \t uploads selected file into your FileStorage\n-------------------");
+                                } else if (userInput.equals("/exit")){
+                                    System.out.println("Shutting Down ....");
+
+                                    for (Map.Entry<String, PeerConnection> entry : hostConnections.entrySet()) {
+                                        String peerKey = entry.getKey();
+                                        PeerConnection connection = entry.getValue();
+
+                                        try {
+                                            connection.sendDisconnectNotification();
+                                            connection.close();
+                                        } catch (IOException e) {
+                                            System.err.println("Error notifying peer " + peerKey + ": " + e.getMessage());
+                                        }
+                                    }
+
+                                    executor.shutdownNow();
+                                    System.exit(0);
                                 }
                                 else{
                                     System.out.println("Invalid Command: \""+userInput+"\" unrecognized!");
@@ -287,7 +305,7 @@ public class Peer {
 
                     while (true) {
                         peerConnection.sendFileList();
-                        Thread.sleep(5000);
+                        Thread.sleep(1000);
                     }
                 }
             } catch (IOException e) {
@@ -306,6 +324,7 @@ public class Peer {
         try {
             String key = loadOrGeneratePublicKey();
 
+            /*
             BufferedReader consoleReader = new BufferedReader(new InputStreamReader(System.in));
 
             System.out.print("Enter TCP port (unique for this peer): ");
@@ -313,8 +332,15 @@ public class Peer {
 
             System.out.print("Enter UDP port (unique for this peer): ");
             int udpPort = Integer.parseInt(consoleReader.readLine());
+            */
+            
+            int tcpPort = findAvailableTCPPort(5000, 5010);
+            int udpPort = findAvailableUDPPort(DISCOVERY_PORT_START, DISCOVERY_PORT_END);
+            System.out.println("TCP Port: " + tcpPort + ", UDP Port: " + udpPort);
+            
 
             Peer peer = new Peer(tcpPort, key, udpPort);
+            
 
             peer.startListening();
             peer.startBroadcasting();
@@ -323,5 +349,30 @@ public class Peer {
             System.out.println(e);
         }
     }
+
+    private static int findAvailableTCPPort(int start, int end) {
+        for (int port = start; port <= end; port++) {
+            try (ServerSocket socket = new ServerSocket(port)) {
+                socket.setReuseAddress(true);
+                return port; // Return the first available port
+            } catch (IOException ignored) {
+                // Port is already in use, continue checking
+            }
+        }
+        throw new RuntimeException("No available ports, Please Try Again Later.");
+    }
+
+    private static int findAvailableUDPPort(int start, int end) {
+    for (int port = start; port <= end; port++) {
+        try (DatagramSocket socket = new DatagramSocket(port)) {
+            socket.setReuseAddress(true);
+            return port; // Return the first available port
+        } catch (IOException ignored) {
+            // Port is already in use, continue checking
+        }
+    }
+    throw new RuntimeException("No available ports, Please Try Again Later.");
+}
+
     
 }
